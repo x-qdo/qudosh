@@ -1,0 +1,130 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"github.com/creack/pty"
+	"golang.org/x/crypto/ssh/terminal"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/sirupsen/logrus"
+	"github.com/x-qdo/qudosh/packages/localcommand"
+	"github.com/x-qdo/qudosh/packages/tty"
+)
+
+func main() {
+	// TODO: Replace to asci art
+	logrus.Info("Welcome to use HDO.")
+
+	// TODO read from env with default
+	shell := "zsh"
+	ctx, cancel := context.WithCancel(context.Background())
+
+	options := localcommand.Options{CloseSignal: 1}
+	factory, err := localcommand.NewFactory(shell, nil, &options)
+	if err != nil {
+		exit(err, 3)
+	}
+
+	slave, err := factory.New(nil)
+	defer slave.Close()
+
+	// We need to make sure that we will read each symbol separately
+	oldState, err := terminal.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		exit(err, 1)
+	}
+	defer terminal.Restore(int(os.Stdin.Fd()), oldState)
+
+	timeNow := time.Now().Format("2006_02_01_15_04_05")
+	fileName := fmt.Sprintf("lab/session_%s.ttyrec", timeNow)
+
+	proxyTTY, err := tty.New(
+		os.Stdin,
+		os.Stdout,
+		slave,
+		tty.WithPermitWrite(),
+		tty.WithTtyRecording(os.Getenv("LOCAL_PREFIX"), fileName, saveFileHandler()),
+	)
+
+	sigwinch := make(chan os.Signal, 1)
+	signal.Notify(sigwinch, syscall.SIGWINCH)
+
+	go func() {
+		// Send initial resize at start
+		_ = resizeBasedOnCurrentShell(os.Stdin, proxyTTY.ResizeEvents)
+
+		for {
+			select {
+			case <-sigwinch:
+				_ = resizeBasedOnCurrentShell(os.Stdin, proxyTTY.ResizeEvents)
+			}
+		}
+	}()
+
+	errs := make(chan error, 1)
+	go func() {
+		errs <- proxyTTY.Run(ctx)
+	}()
+	err = waitSignals(errs, cancel)
+	if err != nil && err != context.Canceled {
+		fmt.Printf("Error: %s\n", err)
+		exit(err, 8)
+	}
+}
+
+func resizeBasedOnCurrentShell(stdin *os.File, resizeEvents chan *tty.ArgResizeTerminal) error {
+	rows, cols, err := pty.Getsize(stdin)
+	if err != nil {
+		return err
+	}
+	initialSize := tty.ArgResizeTerminal{Columns: cols, Rows: rows}
+	resizeEvents <- &initialSize
+	return nil
+}
+
+func saveFileHandler() tty.Hook {
+	return nil
+}
+
+func exit(err error, code int) {
+	if err != nil {
+		fmt.Println(err)
+	}
+	os.Exit(code)
+}
+
+func waitSignals(errs chan error, cancel context.CancelFunc) error {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(
+		sigChan,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+	)
+
+	select {
+	case err := <-errs:
+		return err
+
+	case s := <-sigChan:
+		switch s {
+		case syscall.SIGINT:
+			// gracefulCancel()
+			fmt.Println("C-C to force close")
+			select {
+			case err := <-errs:
+				return err
+			case <-sigChan:
+				fmt.Println("Force closing...")
+				cancel()
+				return <-errs
+			}
+		default:
+			cancel()
+			return <-errs
+		}
+	}
+}
