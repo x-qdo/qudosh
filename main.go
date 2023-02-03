@@ -10,7 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+
 	"github.com/x-qdo/qudosh/packages/localcommand"
 	"github.com/x-qdo/qudosh/packages/tty"
 )
@@ -87,7 +91,47 @@ func resizeBasedOnCurrentShell(stdin *os.File, resizeEvents chan *tty.ArgResizeT
 }
 
 func saveFileHandler() tty.Hook {
-	return nil
+	return func(r *tty.Recorder) error {
+		sess := session.Must(session.NewSessionWithOptions(session.Options{
+			SharedConfigState: session.SharedConfigEnable,
+		}))
+
+		save := func(postfix string) error {
+			s3FileName := fmt.Sprintf("%s/%s%s", os.Getenv("S3_PREFIX"), r.FileName, postfix)
+			fmt.Printf("Uploading to s3: %s\r\n", s3FileName)
+
+			fileName := fmt.Sprintf("%s/%s%s", r.FilePrefix, r.FileName, postfix)
+			file, err := os.Open(fileName)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+
+			uploader := s3manager.NewUploaderWithClient(s3.New(sess, aws.NewConfig()))
+			_, err = uploader.Upload(&s3manager.UploadInput{
+				Bucket:               aws.String(os.Getenv("S3_BUCKET")),
+				ACL:                  aws.String("private"),
+				Key:                  aws.String(s3FileName),
+				ServerSideEncryption: aws.String("AES256"),
+				Body:                 file,
+			})
+			return err
+		}
+
+		err := save("")
+		if err != nil {
+			fmt.Printf("ERROR: Uploading ttyrec failed. %s \r\n", err)
+			return err
+		}
+
+		err = save(".csv")
+		if err != nil {
+			fmt.Printf("ERROR: Uploading csv failed. %s \r\n", err)
+			return err
+		}
+
+		return nil
+	}
 }
 
 func exit(err error, code int) {
