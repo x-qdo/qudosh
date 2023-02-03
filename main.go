@@ -20,11 +20,12 @@ import (
 )
 
 func main() {
-	// TODO: Replace to asci art
-	logrus.Info("Welcome to use HDO.")
+	var err error
+	shell := os.Getenv("QUDOSH_SHELL")
+	if shell == "" {
+		shell = "zsh"
+	}
 
-	// TODO read from env with default
-	shell := "zsh"
 	ctx, cancel := context.WithCancel(context.Background())
 
 	options := localcommand.Options{CloseSignal: 1}
