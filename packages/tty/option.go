@@ -53,7 +53,7 @@ func WithTtyRecording(filePrefix, fileName string, finishedHandler Hook) Option 
 				m.RateMean(),
 			)
 
-			for _ = range time.Tick(MetricsInterval) {
+			for range time.Tick(MetricsInterval) {
 				delta := m.Count() - counter
 				counter = m.Count()
 

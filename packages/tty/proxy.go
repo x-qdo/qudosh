@@ -49,8 +49,6 @@ type ProxyTTY struct {
 	permitWrite bool
 	columns     int
 	rows        int
-	reconnect   int // in seconds
-	masterPrefs []byte
 
 	bufferSize   int
 	writeMutex   sync.Mutex
@@ -81,7 +79,10 @@ func New(masterStdin io.Reader, masterStdout io.Writer, slave Slave, options ...
 	}
 
 	for _, option := range options {
-		option(ptty)
+		err := option(ptty)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return ptty, nil

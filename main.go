@@ -37,11 +37,10 @@ func main() {
 	defer slave.Close()
 
 	// We need to make sure that we will read each symbol separately
-	oldState, err := terminal.MakeRaw(int(os.Stdin.Fd()))
+	_, err = terminal.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
 		exit(err, 1)
 	}
-	defer terminal.Restore(int(os.Stdin.Fd()), oldState)
 
 	timeNow := time.Now().Format("2006_02_01_15_04_05")
 	fileName := fmt.Sprintf("lab/session_%s.ttyrec", timeNow)
@@ -75,7 +74,6 @@ func main() {
 	}()
 	err = waitSignals(errs, cancel)
 	if err != nil && err != context.Canceled {
-		fmt.Printf("Error: %s\n", err)
 		exit(err, 8)
 	}
 }
@@ -136,7 +134,7 @@ func saveFileHandler() tty.Hook {
 
 func exit(err error, code int) {
 	if err != nil {
-		fmt.Println(err)
+		fmt.Printf("Error: %s\r\n", err)
 	}
 	os.Exit(code)
 }
