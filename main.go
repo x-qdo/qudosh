@@ -146,6 +146,7 @@ func waitSignals(errs chan error, cancel context.CancelFunc) error {
 		sigChan,
 		syscall.SIGINT,
 		syscall.SIGTERM,
+		syscall.SIGHUP,
 	)
 
 	select {
