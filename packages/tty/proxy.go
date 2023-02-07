@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"sync"
 	"time"
 
@@ -18,12 +17,12 @@ type Hook func(r *Recorder) error
 
 type Recorder struct {
 	logger          *ttyrec.Encoder
-	File            *os.File
 	Hook            Hook
 	FileName        string
 	FilePrefix      string
-	MetricsFile     *os.File
 	KeystrokesMeter metrics.Meter
+	OutputMeter     metrics.Meter
+	Cancel          context.CancelFunc
 }
 
 func (r Recorder) Write(data []byte) (int, error) {
@@ -49,8 +48,6 @@ type ProxyTTY struct {
 	permitWrite bool
 	columns     int
 	rows        int
-	reconnect   int // in seconds
-	masterPrefs []byte
 
 	bufferSize   int
 	writeMutex   sync.Mutex
@@ -81,7 +78,10 @@ func New(masterStdin io.Reader, masterStdout io.Writer, slave Slave, options ...
 	}
 
 	for _, option := range options {
-		option(ptty)
+		err := option(ptty)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return ptty, nil
@@ -172,9 +172,9 @@ func (ptty *ProxyTTY) Run(ctx context.Context) error {
 		slaveBuffer = nil
 		masterBuffer = nil
 		if ptty.logger != nil {
-			ptty.logger.File.Close()
-			ptty.logger.KeystrokesMeter.Stop()
-			ptty.logger.MetricsFile.Close()
+
+			// trigger cancel context
+			ptty.logger.Cancel()
 
 			if ptty.logger.Hook != nil {
 				ptty.logger.Hook(ptty.logger)
@@ -194,6 +194,7 @@ func (ptty *ProxyTTY) Run(ctx context.Context) error {
 func (ptty *ProxyTTY) handleSlaveReadEvent(data []byte) error {
 	if ptty.logger != nil {
 		ptty.logger.Write(data)
+		ptty.logger.OutputMeter.Mark(int64(1))
 	}
 	err := ptty.masterWrite(data)
 	if err != nil {

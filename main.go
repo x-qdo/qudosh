@@ -10,17 +10,22 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+
 	"github.com/x-qdo/qudosh/packages/localcommand"
 	"github.com/x-qdo/qudosh/packages/tty"
 )
 
 func main() {
-	// TODO: Replace to asci art
-	logrus.Info("Welcome to use HDO.")
+	var err error
+	shell := os.Getenv("QUDOSH_SHELL")
+	if shell == "" {
+		shell = "zsh"
+	}
 
-	// TODO read from env with default
-	shell := "zsh"
 	ctx, cancel := context.WithCancel(context.Background())
 
 	options := localcommand.Options{CloseSignal: 1}
@@ -33,11 +38,10 @@ func main() {
 	defer slave.Close()
 
 	// We need to make sure that we will read each symbol separately
-	oldState, err := terminal.MakeRaw(int(os.Stdin.Fd()))
+	_, err = terminal.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
 		exit(err, 1)
 	}
-	defer terminal.Restore(int(os.Stdin.Fd()), oldState)
 
 	timeNow := time.Now().Format("2006_02_01_15_04_05")
 	fileName := fmt.Sprintf("lab/session_%s.ttyrec", timeNow)
@@ -47,7 +51,7 @@ func main() {
 		os.Stdout,
 		slave,
 		tty.WithPermitWrite(),
-		tty.WithTtyRecording(os.Getenv("LOCAL_PREFIX"), fileName, saveFileHandler()),
+		tty.WithTtyRecording(ctx, os.Getenv("LOCAL_PREFIX"), fileName, saveFileHandler()),
 	)
 
 	sigwinch := make(chan os.Signal, 1)
@@ -71,7 +75,6 @@ func main() {
 	}()
 	err = waitSignals(errs, cancel)
 	if err != nil && err != context.Canceled {
-		fmt.Printf("Error: %s\n", err)
 		exit(err, 8)
 	}
 }
@@ -87,12 +90,52 @@ func resizeBasedOnCurrentShell(stdin *os.File, resizeEvents chan *tty.ArgResizeT
 }
 
 func saveFileHandler() tty.Hook {
-	return nil
+	return func(r *tty.Recorder) error {
+		sess := session.Must(session.NewSessionWithOptions(session.Options{
+			SharedConfigState: session.SharedConfigEnable,
+		}))
+
+		save := func(postfix string) error {
+			s3FileName := fmt.Sprintf("%s/%s%s", os.Getenv("S3_PREFIX"), r.FileName, postfix)
+			fmt.Printf("Uploading to s3: %s\r\n", s3FileName)
+
+			fileName := fmt.Sprintf("%s/%s%s", r.FilePrefix, r.FileName, postfix)
+			file, err := os.Open(fileName)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+
+			uploader := s3manager.NewUploaderWithClient(s3.New(sess, aws.NewConfig()))
+			_, err = uploader.Upload(&s3manager.UploadInput{
+				Bucket:               aws.String(os.Getenv("S3_BUCKET")),
+				ACL:                  aws.String("private"),
+				Key:                  aws.String(s3FileName),
+				ServerSideEncryption: aws.String("AES256"),
+				Body:                 file,
+			})
+			return err
+		}
+
+		err := save("")
+		if err != nil {
+			fmt.Printf("ERROR: Uploading ttyrec failed. %s \r\n", err)
+			return err
+		}
+
+		err = save(".csv")
+		if err != nil {
+			fmt.Printf("ERROR: Uploading csv failed. %s \r\n", err)
+			return err
+		}
+
+		return nil
+	}
 }
 
 func exit(err error, code int) {
 	if err != nil {
-		fmt.Println(err)
+		fmt.Printf("Error: %s\r\n", err)
 	}
 	os.Exit(code)
 }
@@ -103,6 +146,7 @@ func waitSignals(errs chan error, cancel context.CancelFunc) error {
 		sigChan,
 		syscall.SIGINT,
 		syscall.SIGTERM,
+		syscall.SIGHUP,
 	)
 
 	select {
