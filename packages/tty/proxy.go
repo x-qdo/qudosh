@@ -21,6 +21,7 @@ type Recorder struct {
 	FileName        string
 	FilePrefix      string
 	KeystrokesMeter metrics.Meter
+	OutputMeter     metrics.Meter
 	Cancel          context.CancelFunc
 }
 
@@ -193,6 +194,7 @@ func (ptty *ProxyTTY) Run(ctx context.Context) error {
 func (ptty *ProxyTTY) handleSlaveReadEvent(data []byte) error {
 	if ptty.logger != nil {
 		ptty.logger.Write(data)
+		ptty.logger.OutputMeter.Mark(int64(1))
 	}
 	err := ptty.masterWrite(data)
 	if err != nil {

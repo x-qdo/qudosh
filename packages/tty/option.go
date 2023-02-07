@@ -31,7 +31,8 @@ func WithPermitWrite() Option {
 
 func WithTtyRecording(parent context.Context, filePrefix, fileName string, finishedHandler Hook) Option {
 	return func(ptty *ProxyTTY) error {
-		m := metrics.NewMeter()
+		stdinCounter := metrics.NewMeter()
+		stdoutCounter := metrics.NewMeter()
 		f, err := os.Create(fmt.Sprintf("%s/%s", filePrefix, fileName))
 		if err != nil {
 			log.Print(errors.Wrapf(err, "error opening %s: %v\n", fileName, err))
@@ -51,31 +52,39 @@ func WithTtyRecording(parent context.Context, filePrefix, fileName string, finis
 				// write the last line
 				fmt.Fprintf(
 					metricsFile,
-					"%d;%d;%d\n",
+					"%d;%d;%d;%d;%d\n",
 					makeTimestamp(),
 					0,
-					m.Count(),
+					stdinCounter.Count(),
+					0,
+					stdoutCounter.Count(),
 				)
 
-				m.Stop()
+				stdinCounter.Stop()
+				stdoutCounter.Stop()
 				f.Close()
 				metricsFile.Close()
 			}()
 
 			go func() {
-				var counter int64
-				counter = 0
+				var stdinTotal int64 = 0
+				var stdoutTotal int64 = 0
 
 				writeLine := func() {
-					delta := m.Count() - counter
-					counter = m.Count()
+					stdinDelta := stdinCounter.Count() - stdinTotal
+					stdinTotal = stdinCounter.Count()
+
+					stdoutDelta := stdoutCounter.Count() - stdoutTotal
+					stdoutTotal = stdoutCounter.Count()
 
 					fmt.Fprintf(
 						metricsFile,
-						"%d;%d;%d\n",
+						"%d;%d;%d;%d;%d\n",
 						makeTimestamp(),
-						delta,
-						counter,
+						stdinDelta,
+						stdinTotal,
+						stdoutDelta,
+						stdoutTotal,
 					)
 				}
 
@@ -94,7 +103,8 @@ func WithTtyRecording(parent context.Context, filePrefix, fileName string, finis
 		}()
 
 		ptty.logger = &Recorder{
-			KeystrokesMeter: m,
+			KeystrokesMeter: stdinCounter,
+			OutputMeter:     stdoutCounter,
 			FileName:        fileName,
 			FilePrefix:      filePrefix,
 			logger:          ttyrec.NewEncoder(f),
