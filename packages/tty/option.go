@@ -1,6 +1,7 @@
 package tty
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -13,6 +14,10 @@ import (
 
 const MetricsInterval = 10 * time.Second
 
+func makeTimestamp() int64 {
+	return time.Now().UnixNano() / int64(time.Microsecond)
+}
+
 // Option is an option for WebTTY.
 type Option func(*ProxyTTY) error
 
@@ -24,59 +29,77 @@ func WithPermitWrite() Option {
 	}
 }
 
-func WithTtyRecording(filePrefix, fileName string, finishedHandler Hook) Option {
+func WithTtyRecording(parent context.Context, filePrefix, fileName string, finishedHandler Hook) Option {
 	return func(ptty *ProxyTTY) error {
+		m := metrics.NewMeter()
 		f, err := os.Create(fmt.Sprintf("%s/%s", filePrefix, fileName))
 		if err != nil {
 			log.Print(errors.Wrapf(err, "error opening %s: %v\n", fileName, err))
 			return errors.Wrapf(err, "error opening %s: %v\n", fileName, err)
 		}
 
-		metricsFile, err := os.Create(fmt.Sprintf("%s/%s.csv", filePrefix, fileName))
-		if err != nil {
-			log.Print(errors.Wrapf(err, "error opening %s: %v\n", fileName, err))
-			return errors.Wrapf(err, "error opening %s: %v\n", fileName, err)
-		}
+		ctx, cancel := context.WithCancel(parent)
 
-		m := metrics.NewMeter()
-		go func() {
-			var counter int64
-			counter = 0
+		go func() error {
+			metricsFile, err := os.Create(fmt.Sprintf("%s/%s.csv", filePrefix, fileName))
+			if err != nil {
+				log.Print(errors.Wrapf(err, "error opening %s: %v\n", fileName, err))
+				return errors.Wrapf(err, "error opening %s: %v\n", fileName, err)
+			}
 
-			fmt.Fprintf(
-				metricsFile,
-				"%s;%d;%d;%.2f;%.2f\n",
-				time.Now().Format("2006-01-02T15:04:05"),
-				counter,
-				counter,
-				m.Rate1(),
-				m.RateMean(),
-			)
-
-			for range time.Tick(MetricsInterval) {
-				delta := m.Count() - counter
-				counter = m.Count()
-
+			defer func() {
+				// write the last line
 				fmt.Fprintf(
 					metricsFile,
-					"%s;%d;%d;%.2f;%.2f\n",
-					time.Now().Format("2006-01-02T15:04:05"),
-					delta,
-					counter,
-					m.Rate1(),
-					m.RateMean(),
+					"%d;%d;%d\n",
+					makeTimestamp(),
+					0,
+					m.Count(),
 				)
+
+				m.Stop()
+				f.Close()
+				metricsFile.Close()
+			}()
+
+			go func() {
+				var counter int64
+				counter = 0
+
+				writeLine := func() {
+					delta := m.Count() - counter
+					counter = m.Count()
+
+					fmt.Fprintf(
+						metricsFile,
+						"%d;%d;%d\n",
+						makeTimestamp(),
+						delta,
+						counter,
+					)
+				}
+
+				// write the first line
+				writeLine()
+
+				for range time.Tick(MetricsInterval) {
+					writeLine()
+				}
+			}()
+
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
 			}
 		}()
 
 		ptty.logger = &Recorder{
-			MetricsFile:     metricsFile,
 			KeystrokesMeter: m,
-			File:            f,
 			FileName:        fileName,
 			FilePrefix:      filePrefix,
 			logger:          ttyrec.NewEncoder(f),
 			Hook:            finishedHandler,
+			Cancel:          cancel,
 		}
 
 		return nil

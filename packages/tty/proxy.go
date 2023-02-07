@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"sync"
 	"time"
 
@@ -18,12 +17,11 @@ type Hook func(r *Recorder) error
 
 type Recorder struct {
 	logger          *ttyrec.Encoder
-	File            *os.File
 	Hook            Hook
 	FileName        string
 	FilePrefix      string
-	MetricsFile     *os.File
 	KeystrokesMeter metrics.Meter
+	Cancel          context.CancelFunc
 }
 
 func (r Recorder) Write(data []byte) (int, error) {
@@ -173,9 +171,9 @@ func (ptty *ProxyTTY) Run(ctx context.Context) error {
 		slaveBuffer = nil
 		masterBuffer = nil
 		if ptty.logger != nil {
-			ptty.logger.File.Close()
-			ptty.logger.KeystrokesMeter.Stop()
-			ptty.logger.MetricsFile.Close()
+
+			// trigger cancel context
+			ptty.logger.Cancel()
 
 			if ptty.logger.Hook != nil {
 				ptty.logger.Hook(ptty.logger)

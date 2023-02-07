@@ -51,7 +51,7 @@ func main() {
 		os.Stdout,
 		slave,
 		tty.WithPermitWrite(),
-		tty.WithTtyRecording(os.Getenv("LOCAL_PREFIX"), fileName, saveFileHandler()),
+		tty.WithTtyRecording(ctx, os.Getenv("LOCAL_PREFIX"), fileName, saveFileHandler()),
 	)
 
 	sigwinch := make(chan os.Signal, 1)
