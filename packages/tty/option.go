@@ -48,6 +48,12 @@ func WithTtyRecording(parent context.Context, filePrefix, fileName string, finis
 				return errors.Wrapf(err, "error opening %s: %v\n", fileName, err)
 			}
 
+			// write csv header
+			fmt.Fprintf(
+				metricsFile,
+				"timestamp;stdin_delta;stdin_total;stdout_delta;stdout_total\n",
+			)
+
 			defer func() {
 				// write the last line
 				fmt.Fprintf(
