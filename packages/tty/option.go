@@ -12,7 +12,7 @@ import (
 	"github.com/x-qdo/qudosh/packages/ttyrec"
 )
 
-const MetricsInterval = 10 * time.Second
+const MetricsInterval = 1 * time.Second
 
 func makeTimestamp() int64 {
 	return time.Now().UnixNano() / int64(time.Microsecond)
