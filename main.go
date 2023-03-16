@@ -7,6 +7,7 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -20,32 +21,43 @@ import (
 )
 
 func main() {
+	os.Exit(process())
+}
+
+func process() int {
 	var err error
 
 	// os.Args
 	shell := os.Getenv("QUDOSH_SHELL")
 	if shell == "" {
-		shell = "zsh"
+		shellPath := os.Getenv("QUDOSH_SHELL_PATH")
+		if shellPath == "" {
+			fmt.Println("QUDOSH_SHELL_PATH environment variable is not set")
+			return 1
+		}
+		shell = filepath.Join(shellPath, filepath.Base(os.Args[0]))
 	}
-	//shell := os.Args[0]
+	arguments := os.Args[1:]
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	options := localcommand.Options{CloseSignal: 1}
-	factory, err := localcommand.NewFactory(shell, nil, &options)
+	factory, err := localcommand.NewFactory(shell, arguments, &options)
 	if err != nil {
-		exit(err, 3)
+		cancel()
+		return exit(err, 3)
 	}
 
 	slave, err := factory.New(nil)
 	defer slave.Close()
 
 	// We need to make sure that we will read each symbol separately
-	_, err = terminal.MakeRaw(int(os.Stdin.Fd()))
+	oldState, err := terminal.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
-		exit(err, 1)
+		cancel()
+		return exit(err, 1)
 	}
-	defer terminal.Restore(int(os.Stdin.Fd()), nil)
+	defer terminal.Restore(int(os.Stdin.Fd()), oldState)
 
 	timeNow := time.Now().Format("2006_02_01_15_04_05")
 	fileName := fmt.Sprintf("lab/session_%s.ttyrec", timeNow)
@@ -82,10 +94,13 @@ func main() {
 	go func() {
 		errs <- proxyTTY.Run(ctx)
 	}()
+
 	err = waitSignals(errs, cancel)
 	if err != nil && err != context.Canceled {
-		exit(err, 8)
+		return exit(err, 8)
 	}
+
+	return 0
 }
 
 func resizeBasedOnCurrentShell(stdin *os.File, resizeEvents chan *tty.ArgResizeTerminal) error {
@@ -128,13 +143,13 @@ func saveFileHandler() tty.Hook {
 
 		err := save("")
 		if err != nil {
-			fmt.Printf("ERROR: Uploading ttyrec failed. %s \r\n", err)
+			fmt.Printf("ERROR: Uploading ttyrec failed\r\n")
 			return err
 		}
 
 		err = save(".csv")
 		if err != nil {
-			fmt.Printf("ERROR: Uploading csv failed. %s \r\n", err)
+			fmt.Printf("ERROR: Uploading csv failed\r\n")
 			return err
 		}
 
@@ -142,11 +157,11 @@ func saveFileHandler() tty.Hook {
 	}
 }
 
-func exit(err error, code int) {
+func exit(err error, code int) int {
 	if err != nil {
-		fmt.Printf("Error: %s\r\n", err)
+		fmt.Printf("Error: %s", err)
 	}
-	os.Exit(code)
+	return code
 }
 
 func waitSignals(errs chan error, cancel context.CancelFunc) error {
