@@ -119,7 +119,7 @@ func (ptty *ProxyTTY) Run(ctx context.Context) error {
 			}
 		}()
 	}()
-	masterBuffer := make([]byte, 1)
+	masterBuffer := make([]byte, 4)
 	bufferedStdin := bufio.NewReader(ptty.masterStdin)
 	go func() {
 		errs <- func() error {
@@ -131,11 +131,11 @@ func (ptty *ProxyTTY) Run(ctx context.Context) error {
 				if masterBuffer == nil {
 					return ErrMasterClosed
 				}
-				r, _, err := bufferedStdin.ReadRune()
+				n, err := bufferedStdin.Read(masterBuffer)
 				if err != nil {
 					return ErrMasterClosed
 				}
-				err = ptty.handleMasterReadEvent(r)
+				err = ptty.handleMasterReadEvent(masterBuffer[:n])
 				if err != nil {
 					return err
 				}
@@ -216,7 +216,7 @@ func (ptty *ProxyTTY) masterWrite(data []byte) error {
 	return nil
 }
 
-func (ptty *ProxyTTY) handleMasterReadEvent(key rune) error {
+func (ptty *ProxyTTY) handleMasterReadEvent(buf []byte) error {
 	if !ptty.permitWrite {
 		return nil
 	}
@@ -224,7 +224,7 @@ func (ptty *ProxyTTY) handleMasterReadEvent(key rune) error {
 	if ptty.logger != nil {
 		ptty.logger.KeystrokesMeter.Mark(int64(1))
 	}
-	_, err := ptty.slave.Write([]byte{byte(key)})
+	_, err := ptty.slave.Write(buf)
 	if err != nil {
 		return errors.Wrapf(err, "failed to write received data to slave")
 	}
