@@ -21,10 +21,13 @@ import (
 
 func main() {
 	var err error
+
+	// os.Args
 	shell := os.Getenv("QUDOSH_SHELL")
 	if shell == "" {
 		shell = "zsh"
 	}
+	//shell := os.Args[0]
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -42,16 +45,22 @@ func main() {
 	if err != nil {
 		exit(err, 1)
 	}
+	defer terminal.Restore(int(os.Stdin.Fd()), nil)
 
 	timeNow := time.Now().Format("2006_02_01_15_04_05")
 	fileName := fmt.Sprintf("lab/session_%s.ttyrec", timeNow)
+
+	storePrefix := os.Getenv("LOCAL_PREFIX")
+	if storePrefix == "" {
+		storePrefix = "."
+	}
 
 	proxyTTY, err := tty.New(
 		os.Stdin,
 		os.Stdout,
 		slave,
 		tty.WithPermitWrite(),
-		tty.WithTtyRecording(ctx, os.Getenv("LOCAL_PREFIX"), fileName, saveFileHandler()),
+		tty.WithTtyRecording(ctx, storePrefix, fileName, saveFileHandler()),
 	)
 
 	sigwinch := make(chan os.Signal, 1)
